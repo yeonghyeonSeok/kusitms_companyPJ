@@ -44,56 +44,41 @@ router.post("/", upload.single("text"), async (req, res) => {
 });
 
 router.get("/", async (req, res) => {
-  const analyze_result = {
-    date_data: {
-      start: "2021-02-13",
-      end: "2021-03-10",
-    },
-    participant_num: 6,
-    participant_list: [
-      "김유빈",
-      "오케이",
-      "링커리어 이정민님",
-      "김성원",
-      "경수",
-      "김현정",
-    ],
-    participant_chat: [
-      ["김유빈", 473],
-      ["오케이", 259],
-      ["링커리어 이정민님", 194],
-      ["김성원", 95],
-      ["경수", 48],
-      ["김현정", 32],
-    ],
-    participant_file: [
-      ["김유빈", 28],
-      ["오케이", 23],
-      ["김성원", 9],
-      ["김현정", 3],
-      ["경수", 1],
-      ["링커리어 이정민님", 1],
-    ],
-    participant_question: [
-      ["김유빈", 79],
-      ["링커리어 이정민님", 32],
-      ["오케이", 27],
-      ["김성원", 13],
-      ["경수", 7],
-      ["김현정", 4],
-    ],
-    participant_picture: [
-      ["김유빈", 22],
-      ["오케이", 12],
-      ["링커리어 이정민님", 6],
-      ["김성원", 3],
-      ["김현정", 3],
-      ["경수", 2],
-    ],
-  };
+  analyze_result_file = fs.readFileSync(
+    "C:/Users/s_0hyeon/Desktop/kusitms/kusitms_companyPJ/routes/analyze_result.json"
+  );
+  analyze_result_string = analyze_result_file.toString();
+  analyze_result = JSON.parse(analyze_result_string);
+  participant_list = [];
+  participant_list = analyze_result.participant_list;
+  console.log(participant_list[0]);
+  console.log(analyze_result.relation.User[participant_list[0]]);
+  console.log(analyze_result.workability.User[participant_list[0]]);
+  console.log(analyze_result.participation.User[participant_list[0]]);
+  console.log(analyze_result.cooperation.User[participant_list[0]]);
+  console.log(
+    analyze_result.participant_activity.Activity[participant_list[0]]
+  );
+
+  // datasets:[{
+  //   label: participant_list[0],
+  //   fill: true,
+  //   backgroundColor: "",
+  //   boarderColor: "",
+  //   pointBorderColor: "",
+  //   pointBackgroundColor: "",
+  //   data: [
+  //     analyze_result.relation.User[participant_list[0]],
+  //     analyze_result.workability.User[participant_list[0]],
+  //     analyze_result.participation.User[participant_list[0]],
+  //     analyze_result.cooperation.User[participant_list[0]],
+  //     analyze_result.participant_activity.Activity[participant_list[0]]
+  //   ]
+  // }]
+
   return res
     .status(200)
-    .send(defaultRes.successTrue(statusCode.OK, "통신성공", analyze_result));
+    .send(defaultRes.successTrue(statusCode.OK, "분석성공", analyze_result));
 });
 
 module.exports = router;
