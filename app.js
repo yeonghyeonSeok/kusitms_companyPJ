@@ -21,6 +21,16 @@ app.use(express.static(path.join(__dirname, "public")));
 
 app.use("/", indexRouter);
 
+app.use("/analyze", (req, res, next) => {
+  req.setTimeout(4 * 60 * 1000); // No need to offset
+  req.socket.removeAllListeners("timeout"); // This is the work around
+  req.socket.once("timeout", () => {
+    req.timedout = true;
+    res.status(504).send("Timeout");
+  });
+  next();
+});
+
 // catch 404 and forward to error handler
 app.use(function (req, res, next) {
   next(createError(404));

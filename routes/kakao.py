@@ -1,30 +1,39 @@
-# -*- coding: euc-kr -*-
-#import numpy as np
-import pandas as pd
-#from pandas import DataFrame
 import re
 import datetime as dt
 import json
 from numpyencoder import NumpyEncoder
-#import glob
-#from sklearn.preprocessing import StandardScaler
-#from scipy.stats import norm
-
-#¸Ç À§ÀÇ Ã¹ÁÙ°ú ¾Æ·¡ 4ÁÙÀº VSCODE ÀÎÄÚµù ¹®Á¦¶§¹®¿¡ Ãß°¡ÇÑ°Å¶ó ½Å°æ¾È¾²¼ÅµµµË´Ï´Ù!
 import sys
 import io
+
+from collections import Counter
+import matplotlib.pyplot as plt
+import seaborn as sns
+import matplotlib.font_manager as fm
+import datetime as dt
+from sklearn.preprocessing import StandardScaler
+import numpy as np
+import konlpy
+from konlpy.tag import Mecab
+import pandas as pd
+import datetime
+import re
+from scipy.stats import norm
+from requests import get
+import urllib
 
 sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding = 'utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding = 'utf-8')
 
+
 def read_kko_msg(filename):
-    with open(filename, encoding='utf-8') as f:
-        msg_list = f.readlines()
+    with urllib.request.urlopen(filename) as response:
+        msg_list = response.read().decode('utf-8').split('\n')
+
     return msg_list
 
 def apply_kko_regex(msg_list):
-    kko_pattern = re.compile("\[([\S\s]+)\] \[(¿ÀÀü|¿ÀÈÄ) ([0-9:\s]+)\] ([^\n]+)")
-    kko_date_pattern = re.compile("--------------- ([0-9]+³â [0-9]+¿ù [0-9]+ÀÏ) ")
+    kko_pattern = re.compile("\[([\S\s]+)\] \[(ì˜¤ì „|ì˜¤í›„) ([0-9:\s]+)\] ([^\r]+)")
+    kko_date_pattern = re.compile("--------------- ([0-9]+ë…„ [0-9]+ì›” [0-9]+ì¼) ")
 
     emoji_pattern = re.compile("["u"\U0001F600-\U0001F64F"  # emoticons
                                u"\U0001F300-\U0001F5FF"  # symbols & pictographs
@@ -36,50 +45,132 @@ def apply_kko_regex(msg_list):
     cur_date = ""
 
     for msg in msg_list:
-        # ³¯Â¥ ºÎºĞÀÎ °æ¿ì
+        # ë‚ ì§œ ë¶€ë¶„ì¸ ê²½ìš°
         if len(kko_date_pattern.findall(msg)) > 0:
-            cur_date = dt.datetime.strptime(kko_date_pattern.findall(msg)[0], "%Y³â %m¿ù %dÀÏ")
+            cur_date = datetime.datetime.strptime(kko_date_pattern.findall(msg)[0], "%Yë…„ %mì›” %dì¼")
             cur_date = cur_date.strftime("%Y-%m-%d")
         else:
             kko_pattern_result = kko_pattern.findall(msg)
             if len(kko_pattern_result) > 0:
                 tokens = list(kko_pattern_result[0])
-                # ÀÌ¸ğÁö µ¥ÀÌÅÍ »èÁ¦
+                # ì´ëª¨ì§€ ë°ì´í„° ì‚­ì œ
                 tokens[-1] = re.sub(emoji_pattern, "", tokens[-1])
                 tokens.insert(0, cur_date)
                 kko_parse_result.append(tokens)
 
-    kko_parse_result = pd.DataFrame(kko_parse_result, columns=["Date", "User", "Timetype", "Time", "Message"])
-    kko_parse_result.to_csv("kko_regex.csv", index=False)
+    kko_parse_result = pd.DataFrame(kko_parse_result, columns=["Date", "User", "timetype", "Time", "Message"])
+    kko_parse_result.to_csv("/home/ubuntu/kusitms_companyPJ/routes/kko_regex.csv", index=False)
+    #kko_parse_result.to_csv("C:/Users/s_0hyeon/Desktop/kusitms/kusitms_companyPJ/routes/kko_regex.csv", index=False)
+
 
     return kko_parse_result
+
+def data_pre_cleansing(df):
+    df.Date = pd.to_datetime(df.Date)
+    ## 24ì‹œê°„ì œ í‘œê¸°
+    df["24time"] = df["timetype"] + " " + df["Time"]
+    df["24time"] = df["24time"].map(lambda x : x.replace("ì˜¤ì „","AM"))
+    df["24time"] = df["24time"].map(lambda x : x.replace("ì˜¤í›„","PM"))
+
+    temp = []
+    transform_time = []
+    for i in range(len(df)) :
+        time = df["24time"][i]
+        temp.append(datetime.datetime.strptime(time,"%p %I:%M"))
+        transform_time.append(temp[i].time())
+
+    df["24time"] = transform_time
+    df = df.astype(str)
+    df["Date"] = df["Date"] +" "+ df["24time"]
+    df.drop("Time",axis=1,inplace=True)
+    return df
+
+def data_cleansing_date(df):
+    # ë¬¸ìì—´ í˜•íƒœë¡œ ë˜ì–´ ìˆëŠ” ë‚ ì§œ ë°ì´í„°ë¥¼ datetime í˜•íƒœë¡œ ë³€í™˜ì‹œì¼œì¤€ë‹¤.
+    df["Date"] = pd.to_datetime(df["Date"], format="%Y-%m-%d %H:%M:%S")
+    weekday = ["ì›”ìš”ì¼", "í™”ìš”ì¼", "ìˆ˜ìš”ì¼", "ëª©ìš”ì¼", "ê¸ˆìš”ì¼", "í† ìš”ì¼", "ì¼ìš”ì¼"]
+    df["Year"] = df["Date"].apply(lambda x: x.year)
+    df["Month"] = df["Date"].apply(lambda x: x.month)
+    df["Day"] = df["Date"].apply(lambda x: x.day)
+    df["Weekday"] = df["Date"].apply(lambda x: weekday[x.weekday()])
+    df["len"] = df["Message"].apply(lambda x: len(x))
+    df["hour"] = df["Date"].apply(lambda x: x.hour)
+    df["minute"] = df["Date"].apply(lambda x: x.minute)
+    df = df[
+        ['Date', 'Year', 'Month', 'Day', 'Weekday', '24time', 'hour', 'minute', 'timetype', 'len', 'User', 'Message']]
+
+    return df
+
+def data_cleansing_text(df):
+    # ì´ë©”ì¼ ì£¼ì†Œ -> 'ë©”ì¼ì£¼ì†Œ'ë¡œ ë³€í™˜í•˜ê¸°
+    pattern = '([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)'
+    df["Message"] = df["Message"].str.replace(pattern,'ë©”ì¼ì£¼ì†Œ')
+    # ë§í¬ -> 'ë§í¬ë¡œ ë³€í™˜í•˜ê¸°'
+    df["Message"] = df["Message"].apply(lambda x : re.sub(r'^https?:\/\/.*[\r\n]*', 'ë§í¬',x))
+    df["len"] = df["Message"].apply(lambda x : len(x))
+    return df
+
+def data_cleansing_text_1(df):
+    pattern = '[^\w\s]'
+    df["Message"] = df["Message"].apply(lambda x : re.sub(pattern,"",x))
+    pattern = '([ã„±-ã…ã…-ã…£]+)'
+    df["Message"] = df["Message"].apply(lambda x : re.sub(pattern,"",x))
+    return df
+
+def remove_stopwords(text):
+    tokens = text.split(" ")
+    stopwords = ['ìˆ˜', 'í˜„', 'ìˆëŠ”', 'ìˆìŠµë‹ˆë‹¤', 'ê·¸', 'ë…„ë„', 'í•©ë‹ˆë‹¤', 'í•˜ëŠ”', 'ìŸ‚','ë¨','ì‚­ì œëœ ë©”ì‹œì§€ì…ë‹ˆë‹¤','ìƒµê²€ìƒ‰',
+             'ë°', 'ì œ', 'í• ', 'í•˜ê³ ', 'ë”', 'í•œ', 'ê·¸ë¦¬ê³ ', 'ì›”','ê·¼ë°','ì§„ì§œ','ë„ˆë¬´','ì•„ë‹ˆ','ë‹¤ì‹œ','ë‚´ê°€',
+             'ì €ëŠ”', 'ì—†ëŠ”', 'ì…ë‹ˆë‹¤', 'ë“±', 'ì¼', 'ë§ì€', 'ì´ëŸ°', 'ê²ƒì€','ì €í¬', 'ë„¤ë„¤', 'ë„µë„µ',"ì´ëª¨í‹°ì½˜","ê±´ê°€ìš”",
+            "ê·¸ëƒ¥","ê±°ê¸°","ì§€ê¸ˆ","ì´ì œ","ìš°ë¦¬","ì¼ë‹¨","í•œë²ˆ","ë‚˜ë„","í•˜ëŠ”","ê·¸ê²Œ","ì•½ê°„","ê·¸ê±°","í•´ì„œ","ì¬ë¯¸","ë­”ê°€",
+            "ì¡´ë‚˜", "ëˆ„ê°€", "í•˜ê¸°", "í•˜ëŠ”ë°", "ê±°ì˜", "í• ê²Œ", "ì´ë²ˆ", "ì´ê±´", "ì‚¬ì‹¤", "ì •ë„", "ê°‘ìê¸°", "í˜¹ì‹œ","ì´ê±°","ë„¤ë„µ"]
+    meaningful_words = [i for i in tokens if not i in stopwords ]
+    return " ".join(meaningful_words)
+
+def morphs(df):
+    mecab = Mecab()
+    stopwords = ['ìˆ˜', 'í˜„', 'ìˆëŠ”', 'ìˆìŠµë‹ˆë‹¤', 'ê·¸', 'ë…„ë„', 'í•©ë‹ˆë‹¤', 'í•˜ëŠ”', 'ìŸ‚','ë¨','ì‚­ì œëœ ë©”ì‹œì§€ì…ë‹ˆë‹¤','ìƒµê²€ìƒ‰',
+             'ë°', 'ì œ', 'í• ', 'í•˜ê³ ', 'ë”', 'í•œ', 'ê·¸ë¦¬ê³ ', 'ì›”','ê·¼ë°','ì§„ì§œ','ë„ˆë¬´','ì•„ë‹ˆ','ë‹¤ì‹œ','ë‚´ê°€',
+             'ì €ëŠ”', 'ì—†ëŠ”', 'ì…ë‹ˆë‹¤', 'ë“±', 'ì¼', 'ë§ì€', 'ì´ëŸ°', 'ê²ƒì€','ì €í¬', 'ë„¤ë„¤', 'ë„µë„µ','ì¼ë‹¨','ì´ê±°','ë„¤ë„µ']
+
+    df["pos"] = df["NM"].apply(lambda x: mecab.pos(x))
+    df["proverb"] = df["pos"].apply(lambda x: [str(key) for key, value in x if value.startswith("V")])
+
+    # ëª…ì‚¬ ì—´ì„ ë§Œë“¤ ë•Œ 1ê°œ ì§œë¦¬ ëª…ì‚¬ ì œê±°í•˜ê³ , stopwords ëª…ì‚¬ ì œê±°
+    df["nouns"] = df["pos"].apply(lambda x: [str(key) for key, value in x if value.startswith("N")
+                                             if not len(str(key)) == 1 if not str(key) in stopwords])
+    return df
 
 def extract_period(df) :
     start = df.iloc[0]['Date']
     end = df.iloc[-1]['Date']
-    #print("Start :", start) #TODO: printÇÏ´Â Ç×¸ñµéÀÌ ÀüºÎ ¼­¹ö·Î returnµÇ´Â ±¸Á¶¶ó ¿ì¼± print´Â ÇÊ¿äÇÑ Ç×¸ñµé¸¸ ³²°ÜµÎ¾ú½À´Ï´Ù!
-    #print("End :", end) #TODO: printÇÏ´Â Ç×¸ñµéÀÌ ÀüºÎ ¼­¹ö·Î returnµÇ´Â ±¸Á¶¶ó ¿ì¼± print´Â ÇÊ¿äÇÑ Ç×¸ñµé¸¸ ³²°ÜµÎ¾ú½À´Ï´Ù!
+    #print("Start :", start) #TODO: printí•˜ëŠ” í•­ëª©ë“¤ì´ ì „ë¶€ ì„œë²„ë¡œ returnë˜ëŠ” êµ¬ì¡°ë¼ ìš°ì„  printëŠ” í•„ìš”í•œ í•­ëª©ë“¤ë§Œ ë‚¨ê²¨ë‘ì—ˆìŠµë‹ˆë‹¤!
+    #print("End :", end) #TODO: printí•˜ëŠ” í•­ëª©ë“¤ì´ ì „ë¶€ ì„œë²„ë¡œ returnë˜ëŠ” êµ¬ì¡°ë¼ ìš°ì„  printëŠ” í•„ìš”í•œ í•­ëª©ë“¤ë§Œ ë‚¨ê²¨ë‘ì—ˆìŠµë‹ˆë‹¤!
     start = start.strftime('%Y-%m-%d')
     end = end.strftime('%Y-%m-%d')
     date_data = {
         "start": start,
         "end": end
     }
-    #print(start, end) #TODO: printÇÏ´Â Ç×¸ñµéÀÌ ÀüºÎ ¼­¹ö·Î returnµÇ´Â ±¸Á¶¶ó ¿ì¼± print´Â ÇÊ¿äÇÑ Ç×¸ñµé¸¸ ³²°ÜµÎ¾ú½À´Ï´Ù!
+    #print(start, end) #TODO: printí•˜ëŠ” í•­ëª©ë“¤ì´ ì „ë¶€ ì„œë²„ë¡œ returnë˜ëŠ” êµ¬ì¡°ë¼ ìš°ì„  printëŠ” í•„ìš”í•œ í•­ëª©ë“¤ë§Œ ë‚¨ê²¨ë‘ì—ˆìŠµë‹ˆë‹¤!
     #return start, end
     return date_data
     # with open('extract_period_func.json', 'w', encoding='utf-8') as file:
     #     return json.dump(date_data, file)
-    
+
+def all_chat_count(df) :
+    #print(len(df))
+    return len(df)
+
 def participant_show(df):
     df = df['User'].value_counts(dropna=True, sort=True)
     df = pd.DataFrame(df)
     df = df.reset_index()
     df.columns = ['User', 'Chat_counts']
-    #print(df['User']) #TODO: printÇÏ´Â Ç×¸ñµéÀÌ ÀüºÎ ¼­¹ö·Î returnµÇ´Â ±¸Á¶¶ó ¿ì¼± print´Â ÇÊ¿äÇÑ Ç×¸ñµé¸¸ ³²°ÜµÎ¾ú½À´Ï´Ù!
+    #print(df['User']) #TODO: printí•˜ëŠ” í•­ëª©ë“¤ì´ ì „ë¶€ ì„œë²„ë¡œ returnë˜ëŠ” êµ¬ì¡°ë¼ ìš°ì„  printëŠ” í•„ìš”í•œ í•­ëª©ë“¤ë§Œ ë‚¨ê²¨ë‘ì—ˆìŠµë‹ˆë‹¤!
     df_f=df['User']
-    #print(df_f) #TODO: printÇÏ´Â Ç×¸ñµéÀÌ ÀüºÎ ¼­¹ö·Î returnµÇ´Â ±¸Á¶¶ó ¿ì¼± print´Â ÇÊ¿äÇÑ Ç×¸ñµé¸¸ ³²°ÜµÎ¾ú½À´Ï´Ù!
-    return df_f.values
+    #print(df_f) #TODO: printí•˜ëŠ” í•­ëª©ë“¤ì´ ì „ë¶€ ì„œë²„ë¡œ returnë˜ëŠ” êµ¬ì¡°ë¼ ìš°ì„  printëŠ” í•„ìš”í•œ í•­ëª©ë“¤ë§Œ ë‚¨ê²¨ë‘ì—ˆìŠµë‹ˆë‹¤!
+    return df_f
     # with open('participant_show_func.json', 'w', encoding='utf-8') as file:
     #     return df_f.to_json(file, force_ascii=False)
 
@@ -89,11 +180,17 @@ def chat_counts(df) :
     df = df.reset_index()
     df.columns = ['User', 'Chat_counts']
     df_f=df
-    #print(df_f) #TODO: printÇÏ´Â Ç×¸ñµéÀÌ ÀüºÎ ¼­¹ö·Î returnµÇ´Â ±¸Á¶¶ó ¿ì¼± print´Â ÇÊ¿äÇÑ Ç×¸ñµé¸¸ ³²°ÜµÎ¾ú½À´Ï´Ù!
-    return df_f.values
-    # with open('chat_counts_func.json', 'w', encoding='utf-8') as file:
-    #     return df_f.to_json(file, force_ascii=False)
+    return df_f
 
+
+def chat_counts_percentage(df) :
+    df = df['User'].value_counts(dropna=True, sort=True)
+    df = pd.DataFrame(df)
+    df = df.reset_index()
+    df.columns = ['User', 'Chat_counts']
+    df['Chat_counts']=df['Chat_counts']/sum(df['Chat_counts'])*100
+    df_f = df
+    return df_f
 def count_send_question(df):
     df = df[df['Message'].str.contains('\?')]
     df = df['User'].value_counts(dropna=True, sort=True)
@@ -102,33 +199,32 @@ def count_send_question(df):
     df.columns = ['User', 'count_send_question']
     df_f=df
     #print(df_f)
-    return df_f.values
+    return df_f
     # with open('count_send_question_func.json', 'w', encoding='utf-8') as file:
     #     return df_f.to_json(file, force_ascii=False)
 
-def count_send_file(df):
-    df = df[df['Message'].str.contains('ÆÄÀÏ')]
-    df = df['User'].value_counts(dropna=True, sort=True)
-    df = pd.DataFrame(df)
-    df = df.reset_index()
-    df.columns = ['User', 'count_send_file']
-    df_f=df
-    #print(df_f)
-    return df_f._values
-    # with open('count_send_file_func.json', 'w', encoding='utf-8') as file:
-    #     return df_f.to_json(file, force_ascii=False)
+def activity_show(df):
+    def count_send_picture(df):
+        df = df[df['Message'].str.contains('ì‚¬ì§„')]
+        df = df['User'].value_counts(dropna=True, sort=True)
+        df = pd.DataFrame(df)
+        df = df.reset_index()
+        df.columns = ['User', 'Activity']
+        df_pic = df
+        return df_pic
 
-def count_send_picture(df):
-    df = df[df['Message'].str.contains('»çÁø')]
-    df = df['User'].value_counts(dropna=True, sort=True)
-    df = pd.DataFrame(df)
-    df = df.reset_index()
-    df.columns = ['User', 'count_send_picture']
-    df_f=df
-    #print(df_f)
-    return df_f._values
-    # with open('count_send_picture_func.json', 'w', encoding='utf-8') as file:
-    #     return df_f.to_json(file, force_ascii=False)
+    def count_send_file(df):
+        df = df[df['Message'].str.contains('íŒŒì¼')]
+        df = df['User'].value_counts(dropna=True, sort=True)
+        df = pd.DataFrame(df)
+        df = df.reset_index()
+        df.columns = ['User', 'Activity']
+        df_file = df
+        return df_file
+    df_f = pd.concat([count_send_file(df), count_send_picture(df)]).groupby(['User']).sum().reset_index()
+    df_f = df_f.set_index("User")
+    df_f.index.name=''
+    return df_f
 
 def num_of_user(df) :
     df = df['User'].value_counts(dropna=True, sort=True)
@@ -145,133 +241,293 @@ def num_of_user(df) :
     #     return json.dump(num_of_user_data, file)
 
 def mean_of_message_len(df) :
-    df_f=df.groupby(['User'])['length'].mean()
+    df_f=df.groupby(['User'])['len'].mean()
     #print(df_f)
     return df_f
     # with open('mean_of_message_len_func.json', 'w', encoding='utf-8') as file:
     #     return df_f.to_json(file, force_ascii=False)
 
-def time_chat_counts(df) :
-    df['24time_H']= df['24time'].astype(str)
-    df['24time_H']=df['24time_H'].str[:2]
-    df_f = df['24time_H'].value_counts()
-    #print(df_f)
-    return df_f
-    # with open('time_chat_counts_func.json', 'w', encoding='utf-8') as file:
-    #     return df_f.to_json(file, force_ascii=False)
+def time_all_chat(df):
+    res_df = df[["hour","User"]].groupby(["hour"]).agg({"User":"count"}).reset_index()
+    res_df = res_df.rename(columns={"User":"count"})
+    return res_df
+    # with open('time_all_chat_func.json', 'w', encoding='utf-8') as file:
+    #     return res_df.to_json(file, force_ascii=False)
 
-# def merge_json():
-#     result = []
-#     for f in glob.glob("*.json"):
-#         with open(f, "rb") as infile:
-#             result.append(json.load(infile))
+def time_member_chat(df):
+    users = df["User"].value_counts().index
+    res_df = pd.DataFrame(data=[i for i in range(24)], index=[i for i in range(24)], columns=["hour"])
 
-#     with open("merged_file.json", "wb") as outfile:
-#         return json.dump(result, outfile)
+    for i in range(len(users)):
+        df_ = df[df["User"] == users[i]][["User", "hour"]].groupby(["hour"]).agg({"User": "count"}).reset_index()
+        df_ = df_.rename(columns={"User": ("User " + str(i))})
+        res_df = pd.merge(left=res_df, right=df_, on="hour", how="left")
+    res_df = res_df.fillna(0)
+    res_df = res_df.astype(int)
+    return res_df
+    # with open('time_member_chat.json', 'w', encoding='utf-8') as file:
+    #     return res_df.to_json(file, force_ascii=False)
 
-# def merge_json():
-#     result = []
-#     for f in glob.glob("*.json"):
-#         with open(f, "r", encoding="utf-8") as infile:
-#             result.append(json.load(infile))
+def chat_per_day(df):
+    chat_per_day = (len(df))/((df.iloc[-1]['Date']-df.iloc[0]['Date']).days)
+    return chat_per_day
 
-#     with open("merged_file.json", "w", encoding="cp949") as outfile:
-#         json.dump(result, outfile)
+def cooperation(df):
+    std = StandardScaler()
+    users = df["User"].value_counts().index
+    # users ë³€ìˆ˜ì—ëŠ” ì¹´ì¹´ì˜¤í†¡ë°© ëŒ€í™”ìë“¤ì´ ë“¤ì–´ê°„ë‹¤
+    users_coop_score = []
+    total_cnt = len(df)
+    # total_cntì—ëŠ” ì „ì²´ í†¡ë°© ëŒ€í™”ìˆ˜
+
+    series = (df["hour"].value_counts() / total_cnt)
+    # series ì—ëŠ” ëŒ€í™” ì‹œê°„ëŒ€ë³„ ê°€ì¤‘ì¹˜
+
+    df_series = df[["User", "hour"]]
+    series = series.reset_index().rename(columns={"index": "hour", "hour": "weight"})
+    df_series = pd.merge(left=df_series, right=series, how="inner", on="hour")
+    # df_seriesì—ëŠ” ê° ì‹œê°„ëŒ€ ì¹´í†¡ë³„ ê°€ì¤‘ì¹˜ê°€ ì íŒ dataframeì´ë‹¤
+
+    for i in users:
+        users_coop_score.append(df_series[df_series["User"] == i]["weight"].mean())
+    # res_df ì—ëŠ” ìœ ì €ë³„ í‰ê· ì ì¸ ê°€ì¤‘ì¹˜ ì ìˆ˜ê°€ ë“¤ì–´ê°€ê²Œ ëœë‹¤
+    users_coop_score = std.fit_transform(np.array(users_coop_score).reshape(-1, 1))
+    # min max scalerë¡œ scaling í•´ì£¼ê¸°
+
+    res_df = pd.DataFrame(data=users_coop_score, index=users, columns=["User"])
+
+    # ìœ ì €ë³„ ì—°ê´€ì„± ìˆ˜ì¹˜ ë°±ë¶„ìœ„ êµ¬í•˜ê¸°
+    rv = norm(loc=0, scale=1)
+    res_df["User"] = res_df["User"].apply(lambda x: int(round(rv.cdf(x), 2) * 100)) 
+
+    return res_df
+
+def participation(df):
+    standard = StandardScaler()
+    users_parti_score = []
+    # user ë³„ ì ê·¹ì„± ì ìˆ˜ê°€ ë“¤ì–´ê°„ë‹¤
+    df["Date"] = pd.to_datetime(df["Date"], format="%Y-%m-%d %H:%M:%S")
+    df["Delta"] = df["Date"] - df["Date"].shift(1)
+
+    df_test = df[["Delta", "Date", "User"]]
+    df_test["Interval"] = df_test["Delta"].apply(lambda x: x.seconds // 60)
+    df_test["indifferent"] = (df_test["User"] != df_test["User"].shift(1))
+
+    # ê°ì ë‹µì¥ê°„ê²©ì´ ì–´ëŠì •ë„ ë˜ëŠ”ì§€ í™•ì¸í•´ë³´ê¸°
+    test = df_test[df_test["indifferent"]][["User", "Interval"]].fillna(0)
+    test = test.reset_index(drop=True)
+    # test ì—ëŠ” User ë³„ Intervalì´ ë“¤ì–´ê°€ ìˆë‹¤
+
+    weight = []
+    for j in range(len(test)):
+        for i in range(24):
+            if i * 60 <= test.loc[j, "Interval"] < (i + 1) * 60:
+                weight.append((24 - i) / 24)
+    test = test.assign(weight=weight)
+    # test ì— User ë³„ Intervalì— ë”°ë¥¸ Weight ì¶”ê°€í•´ì£¼ê¸°
+
+    # User ëª©ë¡
+    users = test["User"].value_counts().index
+
+    # User ë³„ ì ìˆ˜
+    for i in users:
+        users_parti_score.append(test[test["User"] == i]["weight"].sum())
+
+    # ê²°ê³¼ê°’ StandardScaling
+    users_parti_score = standard.fit_transform(np.array(users_parti_score).reshape(-1, 1))
+
+    # DataFrameìœ¼ë¡œ ë‚´ë³´ë‚´ê¸°
+    res_df = pd.DataFrame(data=users_parti_score, index=users, columns=["User"])
+
+    # ìœ ì €ë³„ ì—°ê´€ì„± ìˆ˜ì¹˜ ë°±ë¶„ìœ„ êµ¬í•˜ê¸°
+    rv = norm(loc=0, scale=1)
+    res_df["User"] = res_df["User"].apply(lambda x: int(round(rv.cdf(x), 2) * 100))
+
+    return res_df
+
+
+def member_chat_interval(df):
+    df = df[["Delta", "Date", "User"]]
+    df["Interval"] = df["Delta"].apply(lambda x: x.seconds // 60)
+    df["indifferent"] = (df["User"] != df["User"].shift(1))
+
+    df = df[df["indifferent"]][["User", "Interval"]].fillna(0).reset_index(drop=True)
+    df["Interval"] = df["Interval"].astype(int)
+    users = df["User"].value_counts().index
+
+    time = []
+    for i in range(24):
+        hour = str(i * 60) + " ~ " + str((i + 1) * 60) + "ë¶„"
+        time.append(hour)
+    res_df = pd.DataFrame(data=0, index=users, columns=[k for k in range(24)])
+
+    for j in users:
+        for i in range(len(df)):
+            if j == df.loc[i, "User"]:
+                num = df.loc[i, "Interval"] // 60
+                res_df.loc[j, num] += 1
+
+    res_df.columns = time
+
+    return res_df
+
+def all_member_chat_interval(df):
+    res_df = df[["Delta", "Date", "User"]]
+    res_df["Interval"] = res_df["Delta"].apply(lambda x: x.seconds // 60)
+    res_df["indifferent"] = (res_df["User"] != res_df["User"].shift(1))
+    res_df = res_df[res_df["indifferent"]][["Interval"]].fillna(0)
+    res_df = res_df.reset_index(drop=True)
+    res_df = res_df.astype(int)
+
+    return res_df
+
+def word_cloud(df, n_top=50):
+    words = [j for row in df["nouns"] for j in row]
+    words_dict = dict(Counter(words))
+    words_dict = dict(sorted(words_dict.items(), key=lambda x: x[1], reverse=True)[:n_top])
+    res_df = pd.DataFrame(data=words_dict.keys(), columns=["word"])
+    res_df["count"] = words_dict.values()
+
+    # word ì—´ì—ëŠ” ë‹¨ì–´ , count ì—´ì—ëŠ” ë‹¨ì–´ì˜ ê°œìˆ˜ê°€ ì íŒ dataframe -> json
+    return res_df
+
+def relation(df):
+    df["weight"] = 0
+    # df_test ëŠ” Userë³„ë¡œ ì‚¬ìš©í•œ ëª…ì‚¬ë“¤ê³¼ ê°€ì¤‘ì¹˜ì˜ ì´í•©ì´ ë‹´ê¸´ë‹¤
+    standard = StandardScaler()
+    users_relate_score = []
+
+    words = [j for row in df["nouns"] for j in row]
+    # words_dictì—ëŠ” Countë¥¼ ê¸°ì¤€ìœ¼ë¡œ í•œ ëª…ì‚¬ê°€ ë‹´ê²¨ìˆìŒ
+    words_dict = dict(Counter(words))
+
+    # dict_dfëŠ” ëª…ì‚¬ë³„ Countì™€ Weight ì •ë³´ê°€ ë‹´ê²¨ìˆìŒ
+    dict_df = pd.DataFrame(index=words_dict.keys(), data=words_dict.values(), columns=["count"])
+    dict_df["weight"] = dict_df["count"].apply(lambda x: x / dict_df.sum())
+
+    # ëŒ€í™”ë³„ ëª…ì‚¬ ê°€ì¤‘ì¹˜ í•© êµ¬í•˜ê¸°
+    for i in range(len(df)):
+        weight = 0
+        for j in df.loc[i, "nouns"]:
+            weight += dict_df.loc[j, "weight"]
+        df.loc[i, "weight"] = weight
+
+    users = df["User"].value_counts().index
+
+    for i in users:
+        users_relate_score.append(df[df["User"] == i]["weight"].sum())
+
+    users_relate_score = standard.fit_transform(np.array(users_relate_score).reshape(-1, 1))
+    res_df = pd.DataFrame(data=users_relate_score, columns=["User"], index=users)
+
+    rv = norm(loc=0, scale=1)
+    res_df["User"] = res_df["User"].apply(lambda x: int(round(rv.cdf(x), 2) * 100))
+
+    return res_df
+
+
+def workability(df):
+    standard = StandardScaler()
+    mean_len = int(df["len"].mean())
+    res_df = pd.DataFrame(data=(df[["User", "len"]]), columns=["User", "len"])
+    res_df["len"] = res_df["len"] / mean_len
+    res_df = res_df.groupby(["User"]).agg({"len": "sum"})
+
+    res_df["len"] = standard.fit_transform((res_df["len"].values).reshape(-1, 1))
+
+    rv = norm(loc=0, scale=1)
+    res_df["len"] = res_df["len"].apply(lambda x: int(round(rv.cdf(x), 2) * 100))
+    res_df = res_df.rename(columns={"len": "User"})
+    res_df.index.name = ''
+    return res_df
 
 if __name__ == '__main__':
-    msg_list = read_kko_msg("kakao.txt")
+    msg_list = read_kko_msg(sys.argv[1])
     apply_kko_regex(msg_list)
-    df = pd.read_csv("kko_regex.csv")
+    df = pd.read_csv("/home/ubuntu/kusitms_companyPJ/routes/kko_regex.csv")
+    #df = pd.read_csv("C:/Users/s_0hyeon/Desktop/kusitms/kusitms_companyPJ/routes/kko_regex.csv")
 
-    df.Date = pd.to_datetime(df.Date)
+    df = data_pre_cleansing(df)
+    df = data_cleansing_date(df)
+    df = data_cleansing_text(df)
+    df = data_cleansing_text_1(df)
+    df["NM"] = df["Message"].apply(remove_stopwords)
+    df = morphs(df)
+### ì—¬ê¸°ê¹Œì§€ ì „ì²˜ë¦¬ ###
+
+    time_all_chat = time_all_chat(df).to_dict()
     
-    df["hour"] = df["Date"].apply(lambda x : x.hour)
-    df["minute"] = df["Date"].apply(lambda x : x.minute)
-    df["year"] = df['Date'].dt.strftime('%Y')
-    df["month"] = df['Date'].dt.strftime('%m')
-    df["day"] = df['Date'].dt.strftime('%d')
-    df["weekday"] = df['Date'].dt.day_name()
 
-    ## 24½Ã°£Á¦ Ç¥±â
-    df["24time"] = df["Timetype"] + " " + df["Time"]
-    df["24time"] = df["24time"].map(lambda x : x.replace("¿ÀÀü","AM"))
-    df["24time"] = df["24time"].map(lambda x : x.replace("¿ÀÈÄ","PM"))
+    time_member_chat= time_member_chat(df).to_dict()
 
-    temp = []
-    transform_time = []
-    for i in range(len(df)) :
-        time = df["24time"][i]
-        temp.append(dt.datetime.strptime(time,"%p %I:%M"))
-        transform_time.append(temp[i].time())
 
-    df["24time"] = transform_time
+    cooperation=cooperation(df).to_dict()
 
-    ## ±ÛÀÚ ¼ö
-    title_len = []
 
-    for i in range(len(df)):
-        ttl = len(df['Message'][i])
-        title_len.append(ttl)
+    participation= participation(df).to_dict()
 
-    df['length'] = title_len
-    df.head()
 
-    ## °èÀı ¼³Á¤
-    quarter = []
-    for i in range(len(df)) :
-        a = int(df["month"][i])
-        if a >= 1 and a <= 3 :
-            quarter.append("1q")
-        if a >= 4 and a <= 6 :
-            quarter.append("2q")
-        if a >= 7 and a <= 9 :
-            quarter.append("3q")
-        if a >= 10 and a <= 12 :
-            quarter.append("4q")
+    member_chat_interval= member_chat_interval(df).to_dict()
 
-    df["quarter"] = quarter
+
+    all_member_chat_interval= all_member_chat_interval(df).to_dict()
+
+
+    word_cloud= word_cloud(df,50).to_dict()
+
     
-    # files=['extract_period_func.json','participant_show_func.json','chat_counts_func.json']
+    relation= relation(df).to_dict()
 
-    #print('==========kakaotalk ½ÃÀÛ, Á¾·á ³¯Â¥==========')
-    date_data = {}
-    date_data = extract_period(df) #TODO: return°ª ¹Ş¾Æ¼­ ÀúÀå
-    #print('==========Ã¤ÆÃ¹æÀÇ Âü¿©ÀÚ ¼ö==========')
+
+    workability= workability(df).to_dict()
+
+    all_chat_count(df)
+
+    chat_per_day_result = 0
+    chat_per_day_result = chat_per_day(df)
+    #print('==========kakaotalk ì‹œì‘, ì¢…ë£Œ ë‚ ì§œ==========')
+
+    date_data = extract_period(df) #TODO: returnê°’ ë°›ì•„ì„œ ì €ì¥
+    #print('==========ì±„íŒ…ë°©ì˜ ì°¸ì—¬ì ìˆ˜==========')
     participant_num = 0
-    participant_num = num_of_user(df) #TODO: return°ª ¹Ş¾Æ¼­ ÀúÀå
-    #print('==========Âü¿©ÀÚ ¸ñ·Ï==========')
-    participant_list = {}
-    participant_list = participant_show(df) #TODO: return°ª ¹Ş¾Æ¼­ ÀúÀå
-    #print(json.dumps(participant_list))
-    #print('==========Âü¿©ÀÚº° Ã¤ÆÃ È½¼ö==========')
-    participant_chat = {}
-    participant_chat = chat_counts(df) #TODO: return°ª ¹Ş¾Æ¼­ ÀúÀå
-    #print('==========Âü¿©ÀÚº° ÆÄÀÏ Àü¼Û È½¼ö==========')
-    participant_file = {}
-    participant_file = count_send_file(df) #TODO: return°ª ¹Ş¾Æ¼­ ÀúÀå
-    #print('==========Âü¿©ÀÚº° Áú¹® Àü¼Û È½¼ö==========')
-    participant_question = {}
-    participant_question = count_send_question(df) #TODO: return°ª ¹Ş¾Æ¼­ ÀúÀå
-    #print('==========Âü¿©ÀÚº° »çÁø Àü¼Û È½¼ö==========')
-    participant_picture = {}
-    participant_picture = count_send_picture(df) #TODO: return°ª ¹Ş¾Æ¼­ ÀúÀå
-    #print('==========Âü¿©ÀÚº° Ã¤ÆÃ Æò±Õ ±æÀÌ==========')
-    #mean_of_message_len(df) #TODO: ÀÌ ÇÔ¼ö¶û ¹Ø¿¡ ÇÔ¼ö´Â À§¿¡ ÇÔ¼öµéÀÌ¶û ´Ù¸£°Ô df¸¦ »ç¿ëÇÏ´Â ¹æ½ÄÀÌ...? Á¶±İ ´Ù¸¥°Å°°¾Æ¼­ Á¦°¡ ¸ø°Çµå·È¾î¿ä¤Ğ¤Ğ
-    #print('==========½Ã°£´ëº° Ã¤ÆÃ ºóµµ¼ö==========')
-    #time_chat_counts(df)
-    # merge_json()
+    participant_num = num_of_user(df) #TODO: returnê°’ ë°›ì•„ì„œ ì €ì¥
+    #print('==========ì°¸ì—¬ì ëª©ë¡==========')
 
-    #TODO: Ãâ·Â°á°ú ÇÑ¹ø¿¡ ÁÖ±âÀ§ÇØ analyze_result ±¸Á¶Ã¼ Çü¼º
+    participant_list = participant_show(df).to_dict() #TODO: returnê°’ ë°›ì•„ì„œ ì €ì¥
+    #print(json.dumps(participant_list))
+    #print('==========ì°¸ì—¬ìë³„ ì±„íŒ… íšŸìˆ˜==========')
+
+    participant_chat = chat_counts(df).to_dict() #TODO: returnê°’ ë°›ì•„ì„œ ì €ì¥
+    #print('==========ì°¸ì—¬ìë³„ ì ê·¹ì„± ìˆ˜ì¹˜==========')
+
+    participant_activity = activity_show(df).to_dict() #TODO: returnê°’ ë°›ì•„ì„œ ì €ì¥
+    #print('==========ì°¸ì—¬ìë³„ ì§ˆë¬¸ ì „ì†¡ íšŸìˆ˜==========')
+
+    participant_question = count_send_question(df).to_dict() #TODO: returnê°’ ë°›ì•„ì„œ ì €ì¥
+
+    #print('==========ì°¸ì—¬ìë³„ ì±„íŒ… ë¹„ìœ¨==========')
+ 
+    chat_counts_percentage = chat_counts_percentage(df).to_dict()
+
     analyze_result = {}
     analyze_result = {
+        'time_all_chat': time_all_chat,
+        'chat_per_day' : chat_per_day_result,
+        'time_member_chat': time_member_chat,
+        'cooperation': cooperation,
+        'participation' : participation,
+        'member_chat_interval' : member_chat_interval,
+        'all_member_chat_interval' : all_member_chat_interval,
+        'word_cloud' : word_cloud,
+        'relation': relation,
+        'workability': workability,
         'date_data': date_data,
         'participant_num': participant_num,
         'participant_list': participant_list,
         'participant_chat' :participant_chat,
-        'participant_file' : participant_file,
         'participant_question' : participant_question,
-        'participant_picture' : participant_picture
+        'participant_activity' : participant_activity,
+        'chat_counts_percentage' : chat_counts_percentage
     }
 
-    #TODO: json.dumps·Î Ãâ·Â°á°ú jsonÇüÅÂ·Î return, ensure_ascii=False¿É¼ÇÀº ÇÑ±Û ÀÎÄÚµù°ü·Ã ¿É¼Ç, cls=NumpyEncoder´Â ndarray¸¦ jsonÈ­ ÇÏ±âÀ§ÇÑ ¿É¼Ç
     print(json.dumps(analyze_result, ensure_ascii=False, cls=NumpyEncoder))

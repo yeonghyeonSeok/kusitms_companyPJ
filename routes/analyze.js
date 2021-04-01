@@ -3,6 +3,8 @@ const router = express.Router();
 const upload = require("../config/multer");
 const defaultRes = require("../module/utils/utils");
 const statusCode = require("../module/utils/statusCode");
+const fs = require("fs");
+const { PythonShell } = require("python-shell");
 
 /*
 대화내용 분석
@@ -16,11 +18,29 @@ router.post("/", upload.single("text"), async (req, res) => {
       .status(200)
       .send(defaultRes.successFalse(statusCode.OK, "파일전송실패"));
   }
-  return res
-    .status(200)
-    .send(
-      defaultRes.successTrue(statusCode.OK, "파일전송성공", req.file.location)
+  //PythonShell 사용방법
+
+  let options = {
+    scriptPath: "/home/ubuntu/kusitms_companyPJ/routes",
+    //scriptPath: "C:/Users/s_0hyeon/Desktop/kusitms/kusitms_companyPJ/routes",
+    args: [req.file.location],
+  };
+  PythonShell.run("kakao.py", options, (err, data) => {
+    if (err) {
+      return res
+        .status(200)
+        .send(defaultRes.successFalse(statusCode.OK, "분석실패"));
+    }
+
+    fs.writeFileSync(
+      "/home/ubuntu/kusitms_companyPJ/routes/analyze_result.json",
+      data
     );
+
+    return res
+      .status(200)
+      .send(defaultRes.successTrue(statusCode.OK, "분석성공"));
+  });
 });
 
 router.get("/", async (req, res) => {
